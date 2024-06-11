@@ -1,0 +1,327 @@
+service: choreographed-saga
+frameworkVersion: "3"
+
+custom:
+  orderNotificationEndpoint: https://webhook.site/9968f246-9096-49de-b038-f8fbe369f585
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: eu-west-1
+  eventBridge:
+    useCloudFormation: true
+  iam: # should be less permissive
+    role:
+      statements:
+        - Effect: Allow
+          Action: "events:PutEvents"
+          Resource:
+            - !GetAtt GlobalEventBus.Arn
+            - !GetAtt LoyaltyEventBus.Arn
+        - Effect: Allow
+          Action: "dynamodb:*"
+          Resource: !GetAtt IdempotencyTable.Arn
+  environment: # should be supplied per function
+    GLOBAL_EVENT_BUS_ARN: !GetAtt GlobalEventBus.Arn
+    LOYALTY_EVENT_BUS_ARN: !GetAtt LoyaltyEventBus.Arn
+    IDEMPOTENCY_TABLE_NAME: !Ref IdempotencyTable
+
+package:
+  individually: true
+  patterns:
+    - "!./**"
+    - "node_modules/**"
+    - "*.js"
+
+functions:
+  order-place:
+    handler: order.place
+    url: true
+  warehouse-worker:
+    handler: warehouse.worker
+    events:
+      - sqs:
+          arn: !GetAtt WarehouseQueue.Arn
+  payment-worker:
+    handler: payment.worker
+    events:
+      - sqs:
+          arn: !GetAtt PaymentQueue.Arn
+  loyalty-award-points:
+    handler: loyalty.award
+    events:
+      - eventBridge:
+          eventBus: !GetAtt LoyaltyEventBus.Name
+          pattern:
+            account:
+              - !Sub "${AWS::AccountId}"
+            source:
+              - "payment"
+            detail-type:
+              - "payment.taken"
+
+resources:
+  Resources:
+    GlobalEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: "${self:service}-global"
+
+    LoyaltyEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: "${self:service}-loyalty"
+
+    GlobalToLoyaltyEventBusEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !GetAtt GlobalEventBus.Name
+        EventPattern:
+          account:
+            - !Sub "${AWS::AccountId}"
+          source:
+            - "payment"
+          detail-type:
+            - "payment.taken"
+        Targets:
+          - Id: "LoyaltyEventBus"
+            Arn: !GetAtt LoyaltyEventBus.Arn
+            RoleArn: !GetAtt CrossEventBusRole.Arn
+
+    LoyaltyToGlobalEventBusEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !GetAtt LoyaltyEventBus.Name
+        EventPattern:
+          account:
+            - !Sub "${AWS::AccountId}"
+          source:
+            - "loyalty"
+          detail-type:
+            - "loyalty.points-awarded"
+        Targets:
+          - Id: "GlobalEventBus"
+            Arn: !GetAtt GlobalEventBus.Arn
+            RoleArn: !GetAtt CrossEventBusRole.Arn
+
+    CrossEventBusRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - events.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Path: "/service-role/"
+        Policies:
+          - PolicyName: eventbridge-cross-bus
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - events:PutEvents
+                  Resource:
+                    - !GetAtt GlobalEventBus.Arn
+                    - !GetAtt LoyaltyEventBus.Arn
+
+    WarehouseQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "Warehouse.fifo"
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        DeduplicationScope: "queue"
+
+    WarehouseEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !GetAtt GlobalEventBus.Name
+        EventPattern:
+          account:
+            - !Sub "${AWS::AccountId}"
+          source: # should be source/detail-type combination OR
+            - "order"
+            - "loyalty"
+          detail-type:
+            - "order.placed"
+            - "loyalty.points-awarded"
+        Targets:
+          - Id: "WarehouseQueue"
+            Arn: !GetAtt WarehouseQueue.Arn
+            SqsParameters:
+              MessageGroupId: "Warehouse"
+
+    PaymentQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "Payment"
+
+    PaymentQueueEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !GetAtt GlobalEventBus.Name
+        EventPattern:
+          account:
+            - !Sub "${AWS::AccountId}"
+          source:
+            - "warehouse"
+          detail-type:
+            - "warehouse.stock-reserved"
+        Targets:
+          - Id: "PaymentQueue"
+            Arn: !GetAtt PaymentQueue.Arn
+
+    EventBridgeToToSqsPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: SQS:SendMessage
+              Resource:
+                - !GetAtt WarehouseQueue.Arn
+                - !GetAtt PaymentQueue.Arn
+                - !GetAtt GlobalObservabilityQueue.Arn
+        Queues:
+          - Ref: WarehouseQueue
+          - Ref: PaymentQueue
+          - Ref: GlobalObservabilityQueue
+
+    IdempotencyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: expiration
+          Enabled: true
+        BillingMode: PAY_PER_REQUEST
+
+    OrderNotificationConnection:
+      Type: AWS::Events::Connection
+      Properties:
+        AuthorizationType: API_KEY
+        AuthParameters:
+          ApiKeyAuthParameters:
+            ApiKeyName: "X-Key"
+            ApiKeyValue: "Value"
+
+    OrderNotificationApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - events.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Path: "/service-role/"
+        Policies:
+          - PolicyName: eventbridge-api-destinations
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - events:InvokeApiDestination
+                  Resource: !GetAtt OrderNotificationApiDestination.Arn
+
+    OrderNotificationApiDestination:
+      Type: AWS::Events::ApiDestination
+      Properties:
+        ConnectionArn: !GetAtt OrderNotificationConnection.Arn
+        HttpMethod: POST
+        InvocationEndpoint: ${self:custom.orderNotificationEndpoint}
+
+    OrderNotificationApiDestinationEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !GetAtt GlobalEventBus.Name
+        EventPattern:
+          account:
+            - !Sub "${AWS::AccountId}"
+          source:
+            - "warehouse"
+          detail-type:
+            - "warehouse.order-shipped"
+        Targets:
+          - Id: "OrderNotificationApiDestination"
+            Arn: !GetAtt OrderNotificationApiDestination.Arn
+            RoleArn: !GetAtt OrderNotificationApiRole.Arn
+
+    GlobalObservabilityQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "GlobalObservability"
+
+    GlobalObservabilityLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/events/${self:service}-global-observability
+
+    GlobalObservabilityLogsResourcePolicy:
+      Type: AWS::Logs::ResourcePolicy
+      Properties:
+        PolicyName: EventBridgeToCWLogsPolicy
+        PolicyDocument: !Sub
+          - >
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "EventBridgetoCWLogsPolicy",
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": [
+                      "delivery.logs.amazonaws.com",
+                      "events.amazonaws.com"
+                    ]
+                  },
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": [
+                    "${logArn}"
+                  ],
+                  "Condition": {
+                    "ArnEquals": {"aws:SourceArn": "${ruleArn}"}
+                  }
+                }
+              ]
+            }
+          - { logArn: !GetAtt GlobalObservabilityLogGroup.Arn, ruleArn: !GetAtt GlobalObservabilityEventRule.Arn }
+
+    GlobalObservabilityEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !GetAtt GlobalEventBus.Name
+        EventPattern:
+          account:
+            - !Sub "${AWS::AccountId}"
+        Targets:
+          - Id: "GlobalObservabilityLogGroup"
+            Arn: !GetAtt GlobalObservabilityLogGroup.Arn
+          - Id: "GlobalObservabilityQueue"
+            Arn: !GetAtt GlobalObservabilityQueue.Arn
+
+  Outputs:
+    GlobalObservabilityQueue:
+      Value:
+        Ref: GlobalObservabilityQueue
+      Export:
+        Name: GlobalObservabilityQueue
