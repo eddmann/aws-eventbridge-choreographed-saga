@@ -269,8 +269,25 @@ resources:
                 Content-Type: application/cloudevents+json; charset=UTF-8
             InputTransformer:
               InputPathsMap:
-                detail: "$.detail"
-              InputTemplate: "<detail>"
+                specversion: "$.detail.specversion"
+                id: "$.detail.id"
+                source: "$.detail.source"
+                type: "$.detail.type"
+                data: "$.detail.data"
+                time: "$.detail.time"
+                dataschema: "$.detail.dataschema"
+                correlationid: "$.detail.correlationid"
+              InputTemplate: |
+                {
+                  "specversion": <specversion>,
+                  "id": <id>,
+                  "source": <source>,
+                  "type": <type>,
+                  "data": <data>,
+                  "time": <time>,
+                  "dataschema": <dataschema>,
+                  "correlationid": <correlationid>
+                }
 
     GlobalObservabilityQueue:
       Type: "AWS::SQS::Queue"
