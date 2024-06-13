@@ -4,18 +4,8 @@ const { inspect } = require("util");
 const app = Consumer.create({
   queueUrl: process.env.QUEUE,
   handleMessage: async (message) => {
-    const event = JSON.parse(message.Body);
-    console.log(
-      inspect(
-        {
-          type: event["detail-type"],
-          source: event.source,
-          occurredAt: event.time,
-          payload: event.detail,
-        },
-        { showHidden: false, depth: null, colors: true }
-      )
-    );
+    const event = JSON.parse(message.Body).detail;
+    console.log(inspect(event, { showHidden: false, depth: null, colors: true }));
   },
 });
 

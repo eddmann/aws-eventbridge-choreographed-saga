@@ -154,6 +154,8 @@ resources:
           - Id: "WarehouseQueue"
             Arn: !GetAtt WarehouseQueue.Arn
             SqsParameters:
+              # unable to set the `MessageDeduplicationId` meaning we can not de-duplicate based on
+              # our internal event id, but instead the entire EventBridge event content.
               MessageGroupId: "Warehouse"
 
     PaymentQueue:
@@ -262,6 +264,13 @@ resources:
           - Id: "OrderNotificationApiDestination"
             Arn: !GetAtt OrderNotificationApiDestination.Arn
             RoleArn: !GetAtt OrderNotificationApiRole.Arn
+            HttpParameters:
+              HeaderParameters:
+                Content-Type: application/cloudevents+json; charset=UTF-8
+            InputTransformer:
+              InputPathsMap:
+                detail: "$.detail"
+              InputTemplate: "<detail>"
 
     GlobalObservabilityQueue:
       Type: "AWS::SQS::Queue"

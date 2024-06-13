@@ -11,22 +11,29 @@ const persistenceStore = new DynamoDBPersistenceLayer({
 const config = new IdempotencyConfig({});
 
 const handleEvent = makeIdempotent(
-  async (_eventId, incoming) => {
-    switch (incoming["detail-type"]) {
+  async (_idempotencyId, event) => {
+    switch (event.type) {
       case "warehouse.stock-reserved":
         await client.send(
           new PutEventsCommand({
             Entries: [
               {
                 EventBusName: process.env.GLOBAL_EVENT_BUS_ARN,
-                Detail: JSON.stringify({
-                  eventId: randomUUID(),
-                  correlationId: incoming.detail.correlationId,
-                  order: incoming.detail.order,
-                  payment: { id: randomUUID(), provider: "VISA" },
-                }),
-                DetailType: "payment.taken",
                 Source: "payment",
+                DetailType: "payment.taken",
+                Detail: JSON.stringify({
+                  specversion: "1.0",
+                  id: randomUUID(),
+                  source: "payment",
+                  type: "payment.taken",
+                  data: {
+                    order: event.data.order,
+                    payment: { id: randomUUID(), provider: "VISA" },
+                  },
+                  time: new Date().toISOString(),
+                  dataschema: "",
+                  correlationid: event.correlationid,
+                }),
               },
             ],
           })
@@ -41,11 +48,11 @@ const handleEvent = makeIdempotent(
   }
 );
 
-module.exports.worker = async (event, context) => {
+module.exports.worker = async (queueEvent, context) => {
   config.registerLambdaContext(context);
 
-  console.log(event);
+  console.log(queueEvent);
 
-  const incoming = JSON.parse(event.Records[0].body);
-  await handleEvent(incoming.detail.eventId, incoming);
+  const event = JSON.parse(queueEvent.Records[0].body).detail;
+  await handleEvent(`${event.source}${event.id}`, event);
 };

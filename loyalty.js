@@ -11,23 +11,30 @@ const persistenceStore = new DynamoDBPersistenceLayer({
 const config = new IdempotencyConfig({});
 
 const handleEvent = makeIdempotent(
-  async (_eventId, event) => {
+  async (_idempotencyId, event) => {
     await client.send(
       new PutEventsCommand({
         Entries: [
           {
             EventBusName: process.env.LOYALTY_EVENT_BUS_ARN,
-            Detail: JSON.stringify({
-              eventId: randomUUID(),
-              correlationId: event.detail.correlationId,
-              order: event.detail.order,
-              points: {
-                awarded: 100,
-                expires: Math.floor(Date.now() / 1000) + 604800, // one week from now
-              },
-            }),
-            DetailType: "loyalty.points-awarded",
             Source: "loyalty",
+            DetailType: "loyalty.points-awarded",
+            Detail: JSON.stringify({
+              specversion: "1.0",
+              id: randomUUID(),
+              source: "loyalty",
+              type: "loyalty.points-awarded",
+              data: {
+                order: event.data.order,
+                points: {
+                  awarded: 100,
+                  expires: Math.floor(Date.now() / 1000) + 604800, // one week from now
+                },
+              },
+              time: new Date().toISOString(),
+              dataschema: "",
+              correlationid: event.correlationid,
+            }),
           },
         ],
       })
@@ -41,14 +48,16 @@ const handleEvent = makeIdempotent(
   }
 );
 
-module.exports.award = async (event, context) => {
+module.exports.award = async (lambdaEvent, context) => {
   config.registerLambdaContext(context);
 
-  console.log(event);
+  console.log(lambdaEvent);
 
-  if (event["detail-type"] !== "payment.taken") {
+  const event = lambdaEvent.detail;
+
+  if (event.type !== "payment.taken") {
     throw new Error();
   }
 
-  await handleEvent(event.detail.eventId, event);
+  await handleEvent(`${event.source}${event.id}`, event);
 };

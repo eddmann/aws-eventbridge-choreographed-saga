@@ -3,26 +3,33 @@ const { randomUUID } = require("crypto");
 
 const client = new EventBridgeClient();
 
-module.exports.worker = async (event) => {
-  console.log(event);
+module.exports.worker = async (queueEvent) => {
+  console.log(queueEvent);
 
-  const incoming = JSON.parse(event.Records[0].body);
+  const event = JSON.parse(queueEvent.Records[0].body).detail;
 
-  switch (incoming["detail-type"]) {
+  switch (event.type) {
     case "order.placed":
       await client.send(
         new PutEventsCommand({
           Entries: [
             {
               EventBusName: process.env.GLOBAL_EVENT_BUS_ARN,
-              Detail: JSON.stringify({
-                eventId: randomUUID(),
-                correlationId: incoming.detail.correlationId,
-                order: incoming.detail.order,
-                reservation: { id: randomUUID() },
-              }),
-              DetailType: "warehouse.stock-reserved",
               Source: "warehouse",
+              DetailType: "warehouse.stock-reserved",
+              Detail: JSON.stringify({
+                specversion: "1.0",
+                id: randomUUID(),
+                source: "warehouse",
+                type: "warehouse.stock-reserved",
+                data: {
+                  order: event.data.order,
+                  reservation: { id: randomUUID() },
+                },
+                time: new Date().toISOString(),
+                dataschema: "",
+                correlationid: event.correlationid,
+              }),
             },
           ],
         })
@@ -35,14 +42,21 @@ module.exports.worker = async (event) => {
           Entries: [
             {
               EventBusName: process.env.GLOBAL_EVENT_BUS_ARN,
-              Detail: JSON.stringify({
-                eventId: randomUUID(),
-                correlationId: incoming.detail.correlationId,
-                order: incoming.detail.order,
-                shipping: { address: "23 Fake Street" },
-              }),
-              DetailType: "warehouse.order-shipped",
               Source: "warehouse",
+              DetailType: "warehouse.order-shipped",
+              Detail: JSON.stringify({
+                specversion: "1.0",
+                id: randomUUID(),
+                source: "warehouse",
+                type: "warehouse.order-shipped",
+                data: {
+                  order: event.data.order,
+                  shipping: { address: "23 Fake Street" },
+                },
+                time: new Date().toISOString(),
+                dataschema: "",
+                correlationid: event.correlationid,
+              }),
             },
           ],
         })

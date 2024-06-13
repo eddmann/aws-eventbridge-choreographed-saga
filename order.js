@@ -5,22 +5,31 @@ const client = new EventBridgeClient();
 
 module.exports.place = async () => {
   const event = {
-    EventBusName: process.env.GLOBAL_EVENT_BUS_ARN,
-    Detail: JSON.stringify({
-      eventId: randomUUID(),
-      correlationId: randomUUID(),
+    specversion: "1.0",
+    id: randomUUID(),
+    source: "order",
+    type: "order.placed",
+    data: {
       order: {
         id: randomUUID(),
         items: [{ sku: "123", price: 123 }],
       },
-    }),
-    DetailType: "order.placed",
-    Source: "order",
+    },
+    time: new Date().toISOString(),
+    dataschema: "",
+    correlationid: randomUUID(),
   };
 
   const result = await client.send(
     new PutEventsCommand({
-      Entries: [event],
+      Entries: [
+        {
+          EventBusName: process.env.GLOBAL_EVENT_BUS_ARN,
+          Source: event.source,
+          DetailType: event.type,
+          Detail: JSON.stringify(event),
+        },
+      ],
     })
   );
 
