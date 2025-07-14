@@ -2,7 +2,7 @@ service: choreographed-saga
 frameworkVersion: "3"
 
 custom:
-  orderNotificationEndpoint: https://webhook.site/9968f246-9096-49de-b038-f8fbe369f585
+  orderNotificationEndpoint: ''
 
 provider:
   name: aws

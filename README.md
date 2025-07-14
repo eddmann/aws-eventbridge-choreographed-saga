@@ -7,7 +7,7 @@ Events are published in [CloudEvents](https://github.com/cloudevents/spec/blob/m
 
 <img src="example.png" style="max-width:800px">
 
-## Bounded Contexts
+## Subdomains
 
 - Order
 - Warehouse
