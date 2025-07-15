@@ -1,6 +1,6 @@
-# Choreographed Saga using AWS EventBridge
+# Choreographed Workflow using AWS EventBridge
 
-Example of an choreographed saga to handle order fulfillment using a Event-Driven Architecture (EDA) via AWS EventBridge.
+Example of an choreographed workflow to handle order fulfillment using a Event-Driven Architecture (EDA) via AWS EventBridge.
 Inspired by an example found in the [Monolith to Microservices](https://samnewman.io/books/monolith-to-microservices/) book.
 
 Events are published in [CloudEvents](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md) [structured mode](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md#message) message format.
